@@ -21,7 +21,6 @@ async function transcribeAudio(audioBlob: Blob) {
       sizeInMB: (audioBlob.size / (1024 * 1024)).toFixed(2),
       isFile: audioBlob instanceof File,
       timestamp: new Date().toISOString(),
-      // Add format validation
       hasContent: audioBlob.size > 0,
       mimeType: audioBlob.type || 'no-type'
     }
@@ -42,11 +41,29 @@ async function transcribeAudio(audioBlob: Blob) {
   }
 
   const formData = new FormData();
-  // For iOS, explicitly set the filename with proper extension based on type
-  const fileExtension = audioBlob.type.includes('webm') ? 'webm' : 
-                       audioBlob.type.includes('mp4') ? 'm4a' :
-                       audioBlob.type.includes('mpeg') ? 'mp3' : 'wav';
-  formData.append('file', audioBlob, `audio.${fileExtension}`);
+  
+  // Determine the correct file extension based on MIME type and ensure Whisper compatibility
+  let fileExtension;
+  if (audioBlob.type.includes('webm')) {
+    fileExtension = 'webm';
+  } else if (audioBlob.type.includes('mp4') || audioBlob.type.includes('x-m4a')) {
+    fileExtension = 'm4a';  // Always use .m4a for MP4 audio
+  } else if (audioBlob.type.includes('mpeg') || audioBlob.type.includes('mp3')) {
+    fileExtension = 'mp3';
+  } else if (audioBlob.type.includes('ogg')) {
+    fileExtension = 'ogg';
+  } else if (audioBlob.type.includes('wav')) {
+    fileExtension = 'wav';
+  } else {
+    console.warn('Unknown audio type:', audioBlob.type, 'defaulting to m4a');
+    fileExtension = 'm4a';  // Default to m4a as it's widely supported
+  }
+
+  // Create a new File with explicit MIME type
+  const audioFile = new File([audioBlob], `audio.${fileExtension}`, {
+    type: audioBlob.type || `audio/${fileExtension}`
+  });
+  formData.append('file', audioFile);
   
   // Enhanced FormData logging
   const formDataDetails = {
