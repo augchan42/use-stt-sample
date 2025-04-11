@@ -4,7 +4,7 @@ This is a basic example of using the `useSTT` hook for speech-to-text functional
 
 ## Requirements
 
-- Modern browser with WebRTC support (Chrome, Firefox, Edge, Safari)
+- Modern browser with MediaRecorder API support (Chrome, Firefox, Edge, Safari)
 - Microphone access
 - OpenAI API key with access to Whisper API
 
@@ -29,12 +29,20 @@ npm run dev
 
 ## Features
 
-- Record audio using your microphone
+- Record audio using the MediaRecorder API
+- Automatic audio format handling for different browsers
+  - WebM format for Chrome/Firefox/Edge (native)
+  - iOS/Safari recordings automatically converted to WebM using FFmpeg
+- Audio processing options:
+  - Normalize volume
+  - Reduce background noise
+  - Voice Activity Detection (VAD)
+  - Configurable bitrate and compression
 - Transcribe speech to text using OpenAI's Whisper API
 - Pause/Resume recording functionality
 - Real-time recording status updates
 - Error handling and user feedback
-- React StrictMode compatible
+- Debug logging for troubleshooting
 
 ## Usage Notes
 
@@ -43,11 +51,12 @@ npm run dev
 - Click "Stop Recording" to get the transcription
 - Use Pause/Resume to temporarily halt recording
 - The transcript will appear once processing is complete
-- Check the error section if something goes wrong
+- Check the debug logs section if something goes wrong
 
 ## Troubleshooting
 
 - Make sure your browser has permission to access the microphone
 - Check that your OpenAI API key is valid and has access to Whisper API
 - Ensure you're using a supported browser
-- Check the console for detailed error messages 
+- For iOS/Safari users, the first recording might take longer due to FFmpeg initialization
+- Check the debug logs section for detailed error messages 
