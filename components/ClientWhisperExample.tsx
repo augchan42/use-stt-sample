@@ -18,14 +18,18 @@ async function transcribeAudio(audioBlob: Blob) {
   });
 
   const formData = new FormData();
-  formData.append('file', audioBlob, 'audio.wav');
+  // Skip conversion for WebM format since it's supported by Whisper API
+  const isWebM = audioBlob.type.includes('webm');
+  const filename = isWebM ? 'audio.webm' : 'audio.wav';
+  formData.append('file', audioBlob, filename);
   
   // Log FormData contents (for debugging)
   console.log('Client: FormData contents:', {
     hasFile: formData.has('file'),
     fileName: formData.get('file') instanceof File ? (formData.get('file') as File).name : null,
     fileSize: formData.get('file') instanceof File ? (formData.get('file') as File).size : null,
-    fileType: formData.get('file') instanceof File ? (formData.get('file') as File).type : null
+    fileType: formData.get('file') instanceof File ? (formData.get('file') as File).type : null,
+    format: isWebM ? 'WebM' : 'Other'
   });
 
   const result = await transcribe(formData);
