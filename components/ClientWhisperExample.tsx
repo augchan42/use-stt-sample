@@ -284,16 +284,42 @@ export default function ClientWhisperExample() {
       streamRef.current = stream;
 
       // Set up MediaRecorder with appropriate MIME type
-      const mimeType = isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus';
-      console.log('Initializing MediaRecorder:', {
-        mimeType,
-        isSupported: MediaRecorder.isTypeSupported(mimeType)
-      });
+      let mimeType = 'audio/webm;codecs=opus';
+      if (isIOSRef.current) {
+        // Try different MIME types for iOS
+        const supportedTypes = [
+          '',  // Let browser choose
+          'audio/mp4',
+          'audio/webm',
+          'audio/webm;codecs=opus',
+          'audio/aac',
+          'audio/x-m4a'
+        ];
 
-      mediaRecorderRef.current = new MediaRecorder(stream, {
-        mimeType,
-        audioBitsPerSecond: 24000
-      });
+        mimeType = supportedTypes.find(type => {
+          try {
+            return type === '' || MediaRecorder.isTypeSupported(type);
+          } catch (e) {
+            return false;
+          }
+        }) || '';
+
+        console.log('iOS MIME type selection:', {
+          selectedType: mimeType || 'browser default',
+          testedTypes: supportedTypes.map(type => ({
+            type,
+            supported: type === '' ? true : MediaRecorder.isTypeSupported(type)
+          }))
+        });
+      }
+
+      // Create MediaRecorder with or without explicit MIME type
+      mediaRecorderRef.current = mimeType 
+        ? new MediaRecorder(stream, {
+            mimeType,
+            audioBitsPerSecond: 24000
+          })
+        : new MediaRecorder(stream); // Let browser choose format
 
       console.log('MediaRecorder initialized:', {
         state: mediaRecorderRef.current.state,
