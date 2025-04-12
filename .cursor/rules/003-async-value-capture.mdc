@@ -1,0 +1,74 @@
+---
+description: PREVENT race conditions and stale values by capturing current values in async contexts
+globs: **/*.{js,ts,jsx,tsx}
+---
+
+# Async Value Capture Pattern
+
+## Context
+- When working with asynchronous operations
+- When closures may capture changing values
+- When dealing with concurrent operations
+- When values may change between async operation start and completion
+- When handling callbacks that reference outer scope variables
+
+## Requirements
+- ALWAYS capture current values in local variables before async operations
+- NEVER rely on closure scope for values that may change
+- USE stable references for callbacks and handlers
+- HANDLE race conditions explicitly
+- CLEAN UP resources and subscriptions properly
+
+## Examples
+<example>
+```typescript
+// Good: Capture current value locally
+async function processItem(id: string) {
+  const currentValue = this.value; // Capture current value
+  const result = await api.fetch(id);
+  return { value: currentValue, result };
+}
+
+// Good: Stable callback reference with captured values
+function setupHandler(callback) {
+  const currentConfig = this.config; // Capture current config
+  return async (event) => {
+    const result = await processEvent(event, currentConfig);
+    callback(result);
+  };
+}
+```
+
+Values captured locally, preventing stale data issues. Callbacks maintain stable references to captured values.
+</example>
+
+<example type="invalid">
+```typescript
+// Bad: Using potentially stale closure value
+async function processItem(id: string) {
+  const result = await api.fetch(id);
+  return { value: this.value, result }; // Value may have changed
+}
+
+// Bad: Callback using unstable closure reference
+function setupHandler(callback) {
+  return async (event) => {
+    const result = await processEvent(event, this.config); // Config may change
+    callback(result);
+  };
+}
+```
+
+Values accessed after async operations may be stale. Callbacks reference potentially changing values.
+</example>
+
+## Critical Points
+<critical>
+- ALWAYS capture mutable values before async operations
+- NEVER assume closure values remain unchanged during async operations
+- USE local variables to snapshot current state
+- HANDLE concurrent operations explicitly
+- CLEAN UP resources and subscriptions
+</critical>
+
+<version>1.0.0</version> 

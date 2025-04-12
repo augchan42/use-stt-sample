@@ -1,0 +1,85 @@
+---
+description: PREVENT service re-initialization in React components by using refs and proper dependency management
+globs: src/**/*.{ts,tsx}
+---
+
+# React Service Initialization Pattern
+
+## Context
+- When managing stateful services/adapters in React components
+- When services require cleanup or have expensive initialization
+- When dealing with real-time data processing or streaming
+- When managing external resources (audio, video, websockets)
+
+## Requirements
+- Use refs to maintain service instances across renders
+- Initialize services only when necessary (API key changes, critical deps)
+- Implement proper cleanup in useEffect returns
+- Handle state transitions explicitly and atomically
+- Prevent unnecessary re-renders and re-initializations
+
+## Examples
+<example>
+```typescript
+// Good: Proper service initialization and cleanup
+function useService(config: Config) {
+  const serviceRef = useRef<Service | null>(null);
+  
+  useEffect(() => {
+    if (!serviceRef.current) {
+      serviceRef.current = new Service({
+        ...config,
+        onStateChange: (state) => {
+          // Handle state changes atomically
+          setIsProcessing(state.processing);
+          setIsActive(state.active);
+        }
+      });
+    }
+    
+    return () => {
+      if (serviceRef.current) {
+        serviceRef.current.cleanup();
+        serviceRef.current = null;
+      }
+    };
+  }, [config.apiKey]); // Only reinit on critical changes
+}
+```
+
+Service instance persists across renders, proper cleanup, and clear dependency management.
+</example>
+
+<example type="invalid">
+```typescript
+// Bad: Unnecessary re-initialization and poor state management
+function useService(config: Config) {
+  const [service] = useState(() => new Service(config));
+  
+  useEffect(() => {
+    service.onStateChange = (state) => {
+      // State updates may be stale or race
+      setState(state);
+    };
+    
+    // Missing cleanup
+  }, []); // Missing dependencies
+  
+  // Service recreated on every config change
+  useEffect(() => {
+    service.updateConfig(config);
+  }, [config]); // Too broad dependency
+}
+```
+
+Service state may become stale, no cleanup, and unnecessary re-initialization on any config change.
+</example>
+
+## Critical Points
+<critical>
+- NEVER store service instances in state (use refs)
+- ALWAYS implement proper cleanup
+- ONLY reinitialize on critical dependency changes
+- USE atomic state updates to prevent race conditions
+- HANDLE empty/error states explicitly
+</critical>

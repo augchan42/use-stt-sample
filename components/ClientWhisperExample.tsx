@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { transcribe } from '../app/actions/transcribe';
 import type { FFmpegConfig } from 'use-stt';
 import { useSTT } from 'use-stt';
@@ -26,15 +26,28 @@ const defaultConfig: FFmpegConfig = {
 
 // Function to standardize audio to WebM using Web Audio API
 async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
-  console.log('Starting audio standardization...');
+  console.log('Starting audio standardization...', {
+    inputSize: audioBlob.size,
+    inputType: audioBlob.type,
+    timestamp: new Date().toISOString()
+  });
   
   // Create an audio context
   const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
     sampleRate: 16000 // Whisper prefers 16kHz
   });
+  console.log('AudioContext created:', {
+    sampleRate: audioContext.sampleRate,
+    state: audioContext.state,
+    baseLatency: audioContext.baseLatency,
+    outputLatency: audioContext.outputLatency
+  });
 
   // Convert blob to array buffer
   const arrayBuffer = await audioBlob.arrayBuffer();
+  console.log('Blob converted to ArrayBuffer:', {
+    bufferByteLength: arrayBuffer.byteLength
+  });
   
   // Decode the audio data
   const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -43,11 +56,15 @@ async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
     sampleRate: audioBuffer.sampleRate,
     duration: audioBuffer.duration,
     numberOfChannels: audioBuffer.numberOfChannels,
-    length: audioBuffer.length
+    length: audioBuffer.length,
+    timestamp: new Date().toISOString()
   });
 
   // Create a media stream destination
   const destination = audioContext.createMediaStreamDestination();
+  console.log('MediaStreamDestination created:', {
+    numberOfChannels: destination.stream.getAudioTracks()[0].getSettings()
+  });
   
   // Create source from audio buffer
   const source = audioContext.createBufferSource();
@@ -64,14 +81,26 @@ async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
   // Create MediaRecorder with WebM encoding
   const mediaRecorder = new MediaRecorder(destination.stream, {
     mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 24000 // Adjust based on your needs
+    audioBitsPerSecond: 24000
+  });
+  console.log('MediaRecorder initialized for conversion:', {
+    mimeType: mediaRecorder.mimeType,
+    state: mediaRecorder.state,
+    audioBitsPerSecond: mediaRecorder.audioBitsPerSecond
   });
 
   // Start recording and playing
   const chunks: Blob[] = [];
   
   return new Promise((resolve, reject) => {
-    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.ondataavailable = (e) => {
+      chunks.push(e.data);
+      console.log('Chunk received:', {
+        chunkSize: e.data.size,
+        chunkType: e.data.type,
+        totalChunks: chunks.length
+      });
+    };
     
     mediaRecorder.onstop = () => {
       const webmBlob = new Blob(chunks, { type: 'audio/webm' });
@@ -79,18 +108,28 @@ async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
         originalSize: audioBlob.size,
         webmSize: webmBlob.size,
         originalType: audioBlob.type,
-        webmType: webmBlob.type
+        webmType: webmBlob.type,
+        conversionRatio: (webmBlob.size / audioBlob.size).toFixed(2),
+        totalChunks: chunks.length,
+        timestamp: new Date().toISOString()
       });
       resolve(webmBlob);
     };
     
-    mediaRecorder.onerror = (err) => reject(err);
+    mediaRecorder.onerror = (err) => {
+      console.error('MediaRecorder error during conversion:', err);
+      reject(err);
+    };
     
+    console.log('Starting conversion recording...');
     mediaRecorder.start();
     source.start(0);
     
     // Stop recording when the source finishes
-    source.onended = () => mediaRecorder.stop();
+    source.onended = () => {
+      console.log('Audio source ended, stopping conversion...');
+      mediaRecorder.stop();
+    };
   });
 }
 
@@ -115,9 +154,14 @@ async function transcribeAudio(audioBlob: Blob) {
       processedBlob = await standardizeAudioToWebM(audioBlob);
     }
 
+    // Create a File from the blob with proper extension
+    const audioFile = new File([processedBlob], 'recording.webm', {
+      type: 'audio/webm;codecs=opus'
+    });
+
     // Send to server for transcription
     const formData = new FormData();
-    formData.append('file', processedBlob, 'audio.webm');
+    formData.append('file', audioFile);
     
     const result = await transcribe(formData);
     console.log('Client: Received transcription result:', result);
@@ -131,6 +175,18 @@ async function transcribeAudio(audioBlob: Blob) {
 export default function ClientWhisperExample() {
   const [logs, setLogs] = useState<DebugLog[]>([]);
   const [config, setConfig] = useState<FFmpegConfig>(defaultConfig);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [error, setError] = useState<Error | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
+
+  // Refs for audio handling
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const isIOSRef = useRef<boolean>(false);
 
   const addLog = useCallback((message: string, type: 'log' | 'error' | 'info') => {
     setLogs(prev => [...prev, {
@@ -147,14 +203,10 @@ export default function ClientWhisperExample() {
   );
 
   const {
-    transcript,
-    isRecording,
-    isProcessing,
-    error,
     isInitialized,
     isStopping,
-    startRecording,
-    stopRecording,
+    startRecording: sttStartRecording,
+    stopRecording: sttStopRecording,
     pauseRecording,
     resumeRecording,
   } = useSTT({
@@ -174,6 +226,238 @@ export default function ClientWhisperExample() {
       ffmpeg: config
     }
   });
+
+  // Remove the useEffect that initializes audio
+  // Instead, create an initAudio function that will be called when starting recording
+  const initAudio = async () => {
+    try {
+      setIsInitializing(true);
+      setError(null);
+
+      // Check if running on iOS
+      isIOSRef.current = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      console.log('Device Info:', {
+        type: isIOSRef.current ? 'iOS' : 'Other',
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        vendor: navigator.vendor,
+        mediaRecorderSupport: typeof MediaRecorder !== 'undefined',
+        supportedMimeTypes: {
+          webm: MediaRecorder.isTypeSupported('audio/webm;codecs=opus'),
+          mp4: MediaRecorder.isTypeSupported('audio/mp4'),
+          wav: MediaRecorder.isTypeSupported('audio/wav')
+        }
+      });
+
+      // Initialize AudioContext (but don't create it yet on iOS)
+      if (!isIOSRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+          sampleRate: 16000
+        });
+        console.log('AudioContext initialized:', {
+          sampleRate: audioContextRef.current.sampleRate,
+          state: audioContextRef.current.state,
+          baseLatency: audioContextRef.current.baseLatency
+        });
+      }
+
+      // Get microphone stream
+      const constraints = {
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      };
+      console.log('Requesting microphone with constraints:', constraints);
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const track = stream.getAudioTracks()[0];
+      console.log('Microphone access granted:', {
+        track: track.label,
+        settings: track.getSettings(),
+        constraints: track.getConstraints()
+      });
+      
+      streamRef.current = stream;
+
+      // Set up MediaRecorder with appropriate MIME type
+      const mimeType = isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus';
+      console.log('Initializing MediaRecorder:', {
+        mimeType,
+        isSupported: MediaRecorder.isTypeSupported(mimeType)
+      });
+
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType,
+        audioBitsPerSecond: 24000
+      });
+
+      console.log('MediaRecorder initialized:', {
+        state: mediaRecorderRef.current.state,
+        mimeType: mediaRecorderRef.current.mimeType,
+        audioBitsPerSecond: mediaRecorderRef.current.audioBitsPerSecond
+      });
+
+      // Set up MediaRecorder event handlers
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+          console.log('Recording chunk received:', {
+            chunkSize: e.data.size,
+            chunkType: e.data.type,
+            totalChunks: chunksRef.current.length
+          });
+        }
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        try {
+          setIsProcessing(true);
+          console.log('Recording stopped, processing audio...');
+          
+          // Create initial blob
+          const recordedBlob = new Blob(chunksRef.current, { 
+            type: isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus' 
+          });
+          console.log('Recording completed:', {
+            size: recordedBlob.size,
+            type: recordedBlob.type,
+            chunks: chunksRef.current.length
+          });
+          chunksRef.current = []; // Clear chunks for next recording
+
+          // Convert if needed (iOS)
+          let finalBlob = recordedBlob;
+          if (isIOSRef.current) {
+            console.log('iOS detected, converting audio format...');
+            // Initialize AudioContext on first user interaction
+            if (!audioContextRef.current) {
+              audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+                sampleRate: 16000
+              });
+              console.log('iOS AudioContext initialized');
+            }
+            finalBlob = await standardizeAudioToWebM(recordedBlob);
+          }
+
+          // Create a File from the blob with proper extension
+          const audioFile = new File([finalBlob], 'recording.webm', {
+            type: 'audio/webm;codecs=opus'
+          });
+          console.log('Audio file created:', {
+            name: audioFile.name,
+            type: audioFile.type,
+            size: audioFile.size
+          });
+
+          // Send to server for transcription
+          const formData = new FormData();
+          formData.append('file', audioFile);
+          console.log('Sending to server for transcription...');
+          
+          const result = await transcribe(formData);
+          console.log('Transcription completed:', result);
+          setTranscript(result.transcript);
+        } catch (error) {
+          console.error('Processing error:', {
+            message: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined
+          });
+          setError(error instanceof Error ? error : new Error('Transcription failed'));
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      console.log('Audio system initialization complete');
+      return true;
+    } catch (error) {
+      console.error('Audio initialization error:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      setError(error instanceof Error ? error : new Error('Failed to initialize audio'));
+      return false;
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const startRecording = useCallback(async () => {
+    try {
+      // Always reinitialize audio system for a fresh start
+      const initialized = await initAudio();
+      if (!initialized) {
+        return;
+      }
+
+      // Verify MediaRecorder is initialized
+      if (!mediaRecorderRef.current) {
+        throw new Error('MediaRecorder failed to initialize');
+      }
+
+      chunksRef.current = []; // Clear any previous chunks
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setError(null);
+      
+      console.log('Recording started with fresh audio system');
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      setError(error instanceof Error ? error : new Error('Failed to start recording'));
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+      return;
+    }
+
+    try {
+      console.log('Stopping recording and releasing microphone...');
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+
+      // Stop and release the microphone
+      if (streamRef.current) {
+        console.log('Stopping audio tracks:', {
+          trackCount: streamRef.current.getTracks().length,
+          trackTypes: streamRef.current.getTracks().map(track => track.kind)
+        });
+        
+        streamRef.current.getTracks().forEach(track => {
+          track.stop();
+          console.log('Track stopped:', {
+            kind: track.kind,
+            label: track.label,
+            enabled: track.enabled,
+            state: track.readyState
+          });
+        });
+        streamRef.current = null;
+      }
+
+      // Close audio context if it exists
+      if (audioContextRef.current?.state !== 'closed') {
+        console.log('Closing AudioContext:', {
+          previousState: audioContextRef.current?.state
+        });
+        audioContextRef.current?.close();
+        audioContextRef.current = null;
+      }
+
+      // Clear the media recorder
+      mediaRecorderRef.current = null;
+      
+      console.log('Audio system cleanup complete');
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+      setError(error instanceof Error ? error : new Error('Failed to stop recording'));
+    }
+  }, []);
 
   // Intercept console messages
   useEffect(() => {
@@ -208,6 +492,18 @@ export default function ClientWhisperExample() {
       vendor: window.navigator.vendor,
       language: window.navigator.language,
     });
+  }, []);
+
+  // Cleanup function in useEffect
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (audioContextRef.current?.state !== 'closed') {
+        audioContextRef.current?.close();
+      }
+    };
   }, []);
 
   return (
@@ -334,9 +630,9 @@ export default function ClientWhisperExample() {
           <button
             onClick={startRecording}
             className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
-            disabled={isProcessing}
+            disabled={isProcessing || isInitializing}
           >
-            Start Recording
+            {isInitializing ? 'Initializing...' : 'Start Recording'}
           </button>
         ) : (
           <>

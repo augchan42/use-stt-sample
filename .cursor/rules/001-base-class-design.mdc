@@ -1,0 +1,69 @@
+---
+description: FAVOR base classes over interfaces when implementing shared behavior to reduce code duplication and complexity
+globs: src/**/*.{ts,tsx,js,jsx}
+---
+
+# Base Class Design Pattern
+
+## Context
+- When implementing multiple classes that share common behavior
+- When considering whether to use interfaces vs abstract classes
+- When dealing with error handling and common utilities
+
+## Requirements
+- Use abstract base classes to implement shared behavior instead of duplicating code across implementations
+- Keep error handling simple - extend Error with minimal additions only when truly needed
+- Move common setup, cleanup, and utility methods to the base class
+- Leave only provider/implementation-specific logic in derived classes
+- Abstract classes should define clear extension points via abstract methods
+
+## Examples
+<example>
+```typescript
+// Good: Base class handles common behavior
+abstract class BaseAdapter {
+  protected cleanup(): void {
+    // Common cleanup logic
+  }
+  
+  // Extension point for specific implementations
+  abstract processData(data: Buffer): Promise<Result>;
+}
+
+// Derived class only implements specific logic
+class WhisperAdapter extends BaseAdapter {
+  async processData(data: Buffer): Promise<Result> {
+    // Whisper-specific implementation
+  }
+}
+```
+
+Base class handles common functionality while derived class focuses only on its specific implementation.
+</example>
+
+<example type="invalid">
+```typescript
+// Bad: Duplicated code and unnecessary complexity
+interface IAdapter {
+  start(): void;
+  stop(): void;
+  cleanup(): void;
+}
+
+class WhisperAdapter implements IAdapter {
+  // Duplicates cleanup logic that other adapters will need
+  cleanup(): void {
+    // Cleanup logic duplicated across adapters
+  }
+}
+
+class CustomError extends Error {
+  code: string;
+  severity: number;
+  metadata: unknown;
+  // Unnecessary complexity in error handling
+}
+```
+
+Interfaces force implementation duplication and custom errors add unnecessary complexity.
+</example> 

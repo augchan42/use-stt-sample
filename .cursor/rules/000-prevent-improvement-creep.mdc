@@ -1,0 +1,173 @@
+---
+description: PREVENT unnecessary complexity and improvements when implementing or modifying code
+globs: src/**/*.{ts,tsx,js,jsx}
+---
+
+# Prevent Improvement Creep and Overengineering
+
+## Context
+- When fixing bugs in existing components
+- When implementing new features or solutions
+- When tempted to add "improvements" to simple solutions
+- When code appears unusual or non-intuitive at first glance
+- When dealing with state management or event handling
+- When integrating external APIs or services
+
+## Requirements
+- DO verify that something is actually broken before attempting to fix it
+- DO start with the simplest possible solution that meets the requirements
+- DO check existing implementation details before assuming there's a problem
+- DO identify the minimal set of changes needed to fix an issue
+- DO document why each change is necessary
+- DO preserve existing patterns unless they are the direct cause of the issue
+- DO remove unnecessary state, effects, or event handlers
+- DO challenge assumptions about what makes code "better"
+- NEVER add "nice to have" improvements during bug fixes
+- NEVER change working code patterns just because they're different from preferences
+- NEVER modify component structure unless directly related to the fix
+- NEVER add complexity without a clear, proven need
+- NEVER assume code is broken just because it looks unusual
+
+## Examples
+
+<example>
+// Good: Verify before changing
+// Initial reaction: "null message seems wrong"
+transitionRain(null, hexagramData);
+
+// But first check the implementation:
+transitionRain: (message = null, hexagrams = null) =>
+  set(state => ({
+    ...state,
+    message: message || state.message, // Intentionally preserves previous message
+    hexagrams: hexagrams || state.hexagrams
+  }))
+
+// Conclusion: The null is intentional, preserve the pattern
+</example>
+
+<example>
+// Good: Simple, direct solution
+const VoiceInput = () => {
+  const [isListening, setIsListening] = useState(false);
+  const recognition = useRef(new SpeechRecognition());
+
+  useEffect(() => {
+    // Initialize once, clean up on unmount
+    recognition.current.onend = () => setIsListening(false);
+    return () => recognition.current.stop();
+  }, []); // No unnecessary dependencies
+
+  const toggle = () => {
+    if (isListening) {
+      recognition.current.stop();
+    } else {
+      recognition.current.start();
+    }
+    setIsListening(!isListening);
+  };
+}
+</example>
+
+<example type="invalid">
+// Bad: Mixed bug fix with unrelated improvements
+const handleSubmit = async () => {
+  const [error, setError] = useState(null); // Added new state
+  try {
+    setIsLoading(true);
+    const result = await submitData();
+    processResult(result); // Added new functionality
+  } catch (error) {
+    setError(error); // Changed error handling
+    showToast(error); // Added new error display
+  } finally {
+    setIsLoading(false); // The actual bug fix
+  }
+};
+</example>
+
+<example type="invalid">
+// Bad: Overcomplicated with unnecessary features
+const VoiceInput = () => {
+  const [isListening, setIsListening] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const recognition = useRef(null);
+
+  // Unnecessary recreation of instance
+  useEffect(() => {
+    recognition.current = new SpeechRecognition();
+    recognition.current.continuous = true; // Unnecessary mode
+    
+    // Unnecessary auto-restart logic
+    recognition.current.onend = () => {
+      if (isListening && retryCount < 3) {
+        recognition.current.start();
+        setRetryCount(c => c + 1);
+      }
+    };
+  }, [isListening]); // Unnecessary dependency
+}
+</example>
+
+<example>
+// Good: Remove unused props instead of adapting code
+// Before: Passing unused prop
+<ExpandableChatInput
+  userId={userId}  // Unused prop
+  onQuestionSubmit={handleSubmit}
+  isSubmitting={isSubmitting}
+  t={t}
+/>
+
+// After: Remove unused prop instead of adding support for it
+<ExpandableChatInput
+  onQuestionSubmit={handleSubmit}
+  isSubmitting={isSubmitting}
+  t={t}
+/>
+</example>
+
+## Key Principles
+
+1. Simplicity First
+   - Start with basic implementation
+   - Add complexity only when necessary
+   - Question every "improvement"
+   - Verify issues before making changes
+
+2. Avoid Premature Optimization
+   - Don't add features "just in case"
+   - Wait for real requirements
+   - Remove unused capabilities
+   - Keep changes focused on proven needs
+
+3. Challenge Assumptions
+   - Question why complexity is needed
+   - Verify "improvements" actually help
+   - Consider maintenance cost
+   - Check existing implementation before changes
+
+4. Signs of Overengineering
+   - Multiple state variables for simple tasks
+   - Complex effect dependencies
+   - Automatic retry/recovery logic
+   - Unnecessary feature flags
+   - "Clever" workarounds
+   - State management for static data
+   - Mixing bug fixes with improvements
+   - Props passed but never used
+
+5. When to Simplify
+   - Code requires explanation
+   - Features aren't being used
+   - Bugs from edge cases
+   - Difficult to test
+   - Hard to modify
+   - Changes affect unrelated code
+   - Props or state not actually needed
+
+## History
+- 2024-04-05: Added example of removing unused props instead of adding support for them
+- 2024-04-05: Combined improvement creep and overengineering prevention into single rule
+- 2024-04-05: Added VoiceInput examples from speech recognition simplification
+- 2024-04-05: Added requirement to verify issues before changing code
