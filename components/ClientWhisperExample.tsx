@@ -87,9 +87,21 @@ async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<
         }
       }
 
+      // Create a MediaStreamDestination and connect the audio chain
+      const destination = audioContext.createMediaStreamDestination();
+      const source = audioContext.createBufferSource();
+      source.buffer = processedBuffer;
+      
+      // Add a gain node for potential volume adjustment
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 1.0;
+      
+      // Connect the audio chain
+      source.connect(gainNode);
+      gainNode.connect(destination);
+
       // Create a new MediaRecorder with MP4 format
-      const stream = audioContext.createMediaStreamDestination().stream;
-      const mediaRecorder = new MediaRecorder(stream, {
+      const mediaRecorder = new MediaRecorder(destination.stream, {
         mimeType: 'audio/mp4',
         audioBitsPerSecond: 24000
       });
@@ -113,15 +125,13 @@ async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<
 
         mediaRecorder.onerror = (err) => reject(err);
 
-        // Start recording
+        // Start recording and playback
         mediaRecorder.start();
-        
-        // Play the buffer
-        const source = audioContext.createBufferSource();
-        source.buffer = processedBuffer;
-        source.connect(audioContext.destination);
-        source.start();
-        source.onended = () => mediaRecorder.stop();
+        source.start(0);
+        source.onended = () => {
+          console.log('Audio playback ended, stopping recorder');
+          mediaRecorder.stop();
+        };
       });
     } else {
       // Non-iOS devices can use WebM
