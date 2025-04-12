@@ -328,11 +328,17 @@ export default function ClientWhisperExample() {
       // Get microphone stream
       const constraints = {
         audio: {
-          sampleRate: 16000,
-          channelCount: 1,
+          sampleRate: { ideal: 48000 },  // Higher sample rate for better quality
+          channelCount: { ideal: 1 },    // Mono
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          // Add these for better quality
+          latency: 0,
+          deviceId: undefined,
+          // Request high quality audio
+          sampleSize: 24,
+          volume: 1.0
         }
       };
       console.log('Requesting microphone with constraints:', constraints);
@@ -352,13 +358,20 @@ export default function ClientWhisperExample() {
       if (isIOSRef.current) {
         // Try different MIME types for iOS
         const supportedTypes = [
-          '',  // Let browser choose
+          'audio/wav',
+          'audio/wave',
           'audio/mp4',
-          'audio/webm',
-          'audio/webm;codecs=opus',
           'audio/aac',
-          'audio/x-m4a'
+          'audio/x-m4a',
+          '',  // Let browser choose
         ];
+
+        // Test each MIME type and log results
+        const mimeTypeTests = supportedTypes.map(type => {
+          const supported = type === '' ? true : MediaRecorder.isTypeSupported(type);
+          console.log(`Testing MIME type support for ${type || 'browser default'}:`, supported);
+          return { type, supported };
+        });
 
         mimeType = supportedTypes.find(type => {
           try {
@@ -370,10 +383,8 @@ export default function ClientWhisperExample() {
 
         console.log('iOS MIME type selection:', {
           selectedType: mimeType || 'browser default',
-          testedTypes: supportedTypes.map(type => ({
-            type,
-            supported: type === '' ? true : MediaRecorder.isTypeSupported(type)
-          }))
+          testedTypes: mimeTypeTests,
+          finalSelection: mimeType
         });
       }
 
@@ -381,9 +392,11 @@ export default function ClientWhisperExample() {
       mediaRecorderRef.current = mimeType 
         ? new MediaRecorder(stream, {
             mimeType,
-            audioBitsPerSecond: 24000
+            audioBitsPerSecond: 128000  // Increase bitrate for better quality
           })
-        : new MediaRecorder(stream); // Let browser choose format
+        : new MediaRecorder(stream, {
+            audioBitsPerSecond: 128000  // Increase bitrate for better quality
+          });
 
       console.log('MediaRecorder initialized:', {
         state: mediaRecorderRef.current.state,
@@ -410,7 +423,7 @@ export default function ClientWhisperExample() {
           
           // Create initial blob
           const recordedBlob = new Blob(chunksRef.current, { 
-            type: isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus' 
+            type: chunksRef.current[0]?.type || (isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus')
           });
           console.log('Recording completed:', {
             size: recordedBlob.size,
@@ -419,15 +432,86 @@ export default function ClientWhisperExample() {
           });
           chunksRef.current = []; // Clear chunks for next recording
 
-          // For iOS, keep MP4 format
           let finalBlob = recordedBlob;
           if (isIOSRef.current) {
-            console.log('iOS recording detected, keeping MP4 format');
+            console.log('iOS recording detected, converting to 16kHz mono...');
+            
+            // Create AudioContext at 16kHz
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+              sampleRate: 16000
+            });
+
+            try {
+              // Convert blob to array buffer
+              const arrayBuffer = await recordedBlob.arrayBuffer();
+              console.log('Converting audio buffer:', {
+                size: arrayBuffer.byteLength
+              });
+
+              // Decode the audio data
+              const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+              console.log('Audio decoded:', {
+                originalSampleRate: audioBuffer.sampleRate,
+                originalChannels: audioBuffer.numberOfChannels,
+                duration: audioBuffer.duration
+              });
+
+              // Create mono buffer at 16kHz
+              const offlineCtx = new OfflineAudioContext(1, audioBuffer.duration * 16000, 16000);
+              const source = offlineCtx.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(offlineCtx.destination);
+              source.start();
+
+              // Render the audio
+              const monoBuffer = await offlineCtx.startRendering();
+              console.log('Audio converted:', {
+                newSampleRate: monoBuffer.sampleRate,
+                newChannels: monoBuffer.numberOfChannels,
+                duration: monoBuffer.duration
+              });
+
+              // Keep as MP4 but with correct sample rate and channels
+              const destination = audioContext.createMediaStreamDestination();
+              const newSource = audioContext.createBufferSource();
+              newSource.buffer = monoBuffer;
+              newSource.connect(destination);
+
+              const mediaRecorder = new MediaRecorder(destination.stream, {
+                mimeType: 'audio/mp4',
+                audioBitsPerSecond: 24000
+              });
+
+              const chunks: Blob[] = [];
+              finalBlob = await new Promise((resolve, reject) => {
+                mediaRecorder.ondataavailable = (e) => {
+                  if (e.data.size > 0) chunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                  const mp4Blob = new Blob(chunks, { type: 'audio/mp4' });
+                  console.log('iOS audio processing complete:', {
+                    originalSize: recordedBlob.size,
+                    processedSize: mp4Blob.size,
+                    type: mp4Blob.type
+                  });
+                  resolve(mp4Blob);
+                };
+
+                mediaRecorder.onerror = (err) => reject(err);
+
+                mediaRecorder.start();
+                newSource.start(0);
+                newSource.onended = () => mediaRecorder.stop();
+              });
+            } finally {
+              await audioContext.close();
+            }
           }
 
           // Create a File from the blob with proper extension
           const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.mp4' : 'recording.webm', {
-            type: isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus'
+            type: finalBlob.type
           });
           console.log('Audio file created:', {
             name: audioFile.name,
