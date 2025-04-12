@@ -24,6 +24,76 @@ const defaultConfig: FFmpegConfig = {
   compressionLevel: 10
 };
 
+// Function to standardize audio to WebM using Web Audio API
+async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
+  console.log('Starting audio standardization...');
+  
+  // Create an audio context
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+    sampleRate: 16000 // Whisper prefers 16kHz
+  });
+
+  // Convert blob to array buffer
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  
+  // Decode the audio data
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  
+  console.log('Audio decoded:', {
+    sampleRate: audioBuffer.sampleRate,
+    duration: audioBuffer.duration,
+    numberOfChannels: audioBuffer.numberOfChannels,
+    length: audioBuffer.length
+  });
+
+  // Create a media stream destination
+  const destination = audioContext.createMediaStreamDestination();
+  
+  // Create source from audio buffer
+  const source = audioContext.createBufferSource();
+  source.buffer = audioBuffer;
+  
+  // Create gain node for volume normalization if needed
+  const gainNode = audioContext.createGain();
+  gainNode.gain.value = 1.0; // Adjust if needed
+  
+  // Connect nodes
+  source.connect(gainNode);
+  gainNode.connect(destination);
+  
+  // Create MediaRecorder with WebM encoding
+  const mediaRecorder = new MediaRecorder(destination.stream, {
+    mimeType: 'audio/webm;codecs=opus',
+    audioBitsPerSecond: 24000 // Adjust based on your needs
+  });
+
+  // Start recording and playing
+  const chunks: Blob[] = [];
+  
+  return new Promise((resolve, reject) => {
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    
+    mediaRecorder.onstop = () => {
+      const webmBlob = new Blob(chunks, { type: 'audio/webm' });
+      console.log('Audio standardization complete:', {
+        originalSize: audioBlob.size,
+        webmSize: webmBlob.size,
+        originalType: audioBlob.type,
+        webmType: webmBlob.type
+      });
+      resolve(webmBlob);
+    };
+    
+    mediaRecorder.onerror = (err) => reject(err);
+    
+    mediaRecorder.start();
+    source.start(0);
+    
+    // Stop recording when the source finishes
+    source.onended = () => mediaRecorder.stop();
+  });
+}
+
 // Wrapper function to handle transcription
 async function transcribeAudio(audioBlob: Blob) {
   console.log('Client: Received audio blob:', {
@@ -32,9 +102,22 @@ async function transcribeAudio(audioBlob: Blob) {
   });
 
   try {
-    // Simply pass the blob directly to your transcribe function
+    // Check if we need to standardize the audio
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const needsStandardization = isIOS || 
+      audioBlob.type.includes('mp4') || 
+      audioBlob.type.includes('m4a') ||
+      !audioBlob.type.includes('webm');
+
+    let processedBlob = audioBlob;
+    if (needsStandardization) {
+      console.log('Audio needs standardization');
+      processedBlob = await standardizeAudioToWebM(audioBlob);
+    }
+
+    // Send to server for transcription
     const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.webm');
+    formData.append('file', processedBlob, 'audio.webm');
     
     const result = await transcribe(formData);
     console.log('Client: Received transcription result:', result);
