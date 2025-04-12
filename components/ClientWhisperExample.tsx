@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { transcribe } from '../app/actions/transcribe';
 import type { FFmpegConfig } from 'use-stt';
 import { useSTT } from 'use-stt';
-import lamejs from 'lamejs';
+import { Mp3Encoder, MPEGMode } from 'lamejs2';
 
 interface DebugLog {
   timestamp: string;
@@ -472,11 +472,16 @@ export default function ClientWhisperExample() {
                 duration: monoBuffer.duration
               });
 
-              // Convert to MP3 using lamejs
-              const mp3encoder = new lamejs.Mp3Encoder(1, 16000, 128);
-              const samples = new Int16Array(monoBuffer.length);
+              // Convert to MP3 using lamejs2
+              const mp3encoder = new Mp3Encoder({
+                channels: 1,
+                sampleRate: 16000,
+                bitRate: 128,
+                mode: MPEGMode.MONO
+              });
               
               // Get audio data and convert to 16-bit integers
+              const samples = new Int16Array(monoBuffer.length);
               const channelData = monoBuffer.getChannelData(0);
               for (let i = 0; i < channelData.length; i++) {
                 // Convert Float32 to Int16
