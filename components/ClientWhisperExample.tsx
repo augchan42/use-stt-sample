@@ -63,146 +63,47 @@ async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<
     });
 
     if (isIOS) {
-      console.log('Starting iOS-specific audio processing...');
-      // For iOS, we'll keep the MP4 format but ensure correct sample rate and channels
-      const processedBuffer = audioContext.createBuffer(
-        1, // mono
-        audioBuffer.length,
-        16000 // target sample rate
-      );
-      console.log('Created processed buffer:', {
-        numberOfChannels: processedBuffer.numberOfChannels,
-        length: processedBuffer.length,
-        sampleRate: processedBuffer.sampleRate,
-        duration: processedBuffer.duration
-      });
-
-      // Mix down to mono and resample
-      console.log('Starting mono conversion...');
-      const channelData = processedBuffer.getChannelData(0);
-      if (audioBuffer.numberOfChannels === 1) {
-        console.log('Source is already mono, copying data...');
-        // Copy mono data
-        const sourceData = audioBuffer.getChannelData(0);
-        for (let i = 0; i < channelData.length; i++) {
-          channelData[i] = sourceData[i];
-        }
-      } else {
-        console.log('Converting stereo to mono...');
-        // Mix down to mono
-        const left = audioBuffer.getChannelData(0);
-        const right = audioBuffer.getChannelData(1);
-        for (let i = 0; i < channelData.length; i++) {
-          channelData[i] = (left[i] + right[i]) / 2;
-        }
-      }
-      console.log('Mono conversion complete');
-
-      // Create a MediaStreamDestination and connect the audio chain
-      console.log('Setting up audio processing chain...');
+      console.log('Starting minimal iOS audio processing...');
+      // Create a MediaStreamDestination for WebM output
       const destination = audioContext.createMediaStreamDestination();
-      console.log('Created MediaStreamDestination:', {
-        numberOfChannels: destination.stream.getAudioTracks()[0].getSettings().channelCount,
-        streamActive: destination.stream.active,
-        trackSettings: destination.stream.getAudioTracks()[0].getSettings()
-      });
-
       const source = audioContext.createBufferSource();
-      source.buffer = processedBuffer;
-      console.log('Created BufferSource:', {
-        playbackRate: source.playbackRate.value,
-        duration: source.buffer?.duration,
-        numberOfChannels: source.buffer?.numberOfChannels
-      });
+      source.buffer = audioBuffer;
       
-      // Add a gain node for potential volume adjustment
+      // Simple gain node to ensure proper volume
       const gainNode = audioContext.createGain();
       gainNode.gain.value = 1.0;
-      console.log('Created GainNode:', {
-        gainValue: gainNode.gain.value,
-        numberOfInputs: gainNode.numberOfInputs,
-        numberOfOutputs: gainNode.numberOfOutputs
-      });
       
-      // Connect the audio chain
-      console.log('Connecting audio nodes...');
       source.connect(gainNode);
       gainNode.connect(destination);
-      console.log('Audio nodes connected');
-
-      // Create a new MediaRecorder with MP4 format
-      console.log('Creating MediaRecorder for iOS...');
+      
+      // Create MediaRecorder with WebM output
       const mediaRecorder = new MediaRecorder(destination.stream, {
-        mimeType: 'audio/mp4',
+        mimeType: 'audio/webm;codecs=opus',
         audioBitsPerSecond: 24000
-      });
-      console.log('MediaRecorder created:', {
-        state: mediaRecorder.state,
-        mimeType: mediaRecorder.mimeType,
-        audioBitsPerSecond: mediaRecorder.audioBitsPerSecond
       });
 
       const chunks: Blob[] = [];
       return new Promise((resolve, reject) => {
         mediaRecorder.ondataavailable = (e) => {
-          console.log('MediaRecorder data available:', {
-            dataSize: e.data.size,
-            dataType: e.data.type,
-            timestamp: new Date().toISOString()
-          });
           if (e.data.size > 0) chunks.push(e.data);
         };
 
         mediaRecorder.onstop = () => {
-          console.log('MediaRecorder stopped, creating final blob...');
-          const processedBlob = new Blob(chunks, { type: 'audio/mp4' });
+          const webmBlob = new Blob(chunks, { type: 'audio/webm' });
           console.log('iOS audio processing complete:', {
             originalSize: audioBlob.size,
-            processedSize: processedBlob.size,
+            webmSize: webmBlob.size,
             originalType: audioBlob.type,
-            processedType: processedBlob.type,
-            numberOfChunks: chunks.length,
-            timestamp: new Date().toISOString()
+            webmType: webmBlob.type
           });
-          resolve(processedBlob);
+          resolve(webmBlob);
         };
 
-        mediaRecorder.onerror = (err) => {
-          console.error('MediaRecorder error:', {
-            error: err,
-            state: mediaRecorder.state,
-            timestamp: new Date().toISOString()
-          });
-          reject(err);
-        };
+        mediaRecorder.onerror = (err) => reject(err);
 
-        // Start recording and playback
-        console.log('Starting MediaRecorder and audio playback...');
         mediaRecorder.start();
-        console.log('MediaRecorder started:', {
-          state: mediaRecorder.state,
-          timestamp: new Date().toISOString()
-        });
-
         source.start(0);
-        console.log('Audio source started');
-
-        source.onended = () => {
-          console.log('Audio playback ended, stopping recorder:', {
-            recorderState: mediaRecorder.state,
-            timestamp: new Date().toISOString()
-          });
-          try {
-            mediaRecorder.stop();
-            console.log('MediaRecorder stop called');
-          } catch (error) {
-            console.error('Error stopping MediaRecorder:', {
-              error,
-              state: mediaRecorder.state
-            });
-            reject(error);
-          }
-        };
+        source.onended = () => mediaRecorder.stop();
       });
     } else {
       // Non-iOS devices can use WebM
@@ -287,6 +188,60 @@ async function transcribeAudio(audioBlob: Blob) {
   } catch (error) {
     console.error('Transcription error:', error);
     throw error;
+  }
+}
+
+// Add this helper function at the top of the file after the imports
+function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2;
+  const buffer16Bit = new ArrayBuffer(44 + length);
+  const view = new DataView(buffer16Bit);
+  const channels = [];
+  let sample;
+  let offset = 0;
+  let pos = 0;
+
+  // Write WAV header
+  setUint32(0x46464952);                         // "RIFF"
+  setUint32(36 + length);                        // file length
+  setUint32(0x45564157);                         // "WAVE"
+  setUint32(0x20746d66);                         // "fmt " chunk
+  setUint32(16);                                 // length = 16
+  setUint16(1);                                  // PCM (uncompressed)
+  setUint16(numOfChan);
+  setUint32(buffer.sampleRate);
+  setUint32(buffer.sampleRate * 2 * numOfChan);  // avg. bytes/sec
+  setUint16(numOfChan * 2);                      // block-align
+  setUint16(16);                                 // 16-bit
+  setUint32(0x61746164);                         // "data" - chunk
+  setUint32(length);                             // chunk length
+
+  // Write interleaved data
+  for (let i = 0; i < buffer.numberOfChannels; i++) {
+    channels.push(buffer.getChannelData(i));
+  }
+
+  while (pos < buffer.length) {
+    for (let i = 0; i < numOfChan; i++) {
+      sample = Math.max(-1, Math.min(1, channels[i][pos]));
+      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+      view.setInt16(44 + offset, sample, true);
+      offset += 2;
+    }
+    pos++;
+  }
+
+  return buffer16Bit;
+
+  function setUint16(data: number) {
+    view.setUint16(pos, data, true);
+    pos += 2;
+  }
+
+  function setUint32(data: number) {
+    view.setUint32(pos, data, true);
+    pos += 4;
   }
 }
 
