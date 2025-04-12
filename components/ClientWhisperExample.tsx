@@ -162,16 +162,7 @@ async function transcribeAudio(audioBlob: Blob) {
   try {
     // Check if we need to standardize the audio
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const needsStandardization = isIOS || 
-      audioBlob.type.includes('mp4') || 
-      audioBlob.type.includes('m4a') ||
-      !audioBlob.type.includes('webm');
-
     let processedBlob = audioBlob;
-    if (needsStandardization) {
-      console.log('Audio needs standardization');
-      processedBlob = await standardizeAudioToWebM(audioBlob, isIOS);
-    }
 
     // Create a File from the blob with proper extension
     const audioFile = new File([processedBlob], isIOS ? 'recording.m4a' : 'recording.webm', {
@@ -428,18 +419,10 @@ export default function ClientWhisperExample() {
           });
           chunksRef.current = []; // Clear chunks for next recording
 
-          // Convert if needed (iOS)
+          // For iOS, keep MP4 format
           let finalBlob = recordedBlob;
           if (isIOSRef.current) {
-            console.log('iOS detected, converting audio format...');
-            // Initialize AudioContext on first user interaction
-            if (!audioContextRef.current) {
-              audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-                sampleRate: 16000
-              });
-              console.log('iOS AudioContext initialized');
-            }
-            finalBlob = await standardizeAudioToWebM(recordedBlob, isIOSRef.current);
+            console.log('iOS recording detected, keeping MP4 format');
           }
 
           // Create a File from the blob with proper extension
