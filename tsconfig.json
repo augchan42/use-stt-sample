@@ -26,7 +26,7 @@
       "@/*": ["./*"],
       "src/*": ["../../src/*"]
     },
-    "typeRoots": ["./node_modules/@types", "./types"]
+    "typeRoots": ["./node_modules/@types", "./src/@types"]
   },
   "include": [
     "next-env.d.ts",
