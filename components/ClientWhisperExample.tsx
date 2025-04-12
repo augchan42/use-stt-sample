@@ -473,12 +473,7 @@ export default function ClientWhisperExample() {
               });
 
               // Convert to MP3 using lamejs2
-              const mp3encoder = new Mp3Encoder({
-                channels: 1,
-                sampleRate: 16000,
-                bitRate: 128,
-                mode: 3  // MONO = 3
-              });
+              const mp3encoder = new Mp3Encoder(1, 44100, 128); // channels, sampleRate, bitRate
               
               // Get audio data and convert to 16-bit integers
               const samples = new Int16Array(monoBuffer.length);
