@@ -165,7 +165,7 @@ async function transcribeAudio(audioBlob: Blob) {
     let processedBlob = audioBlob;
 
     // Create a File from the blob with proper extension
-    const audioFile = new File([processedBlob], isIOS ? 'recording.m4a' : 'recording.webm', {
+    const audioFile = new File([processedBlob], isIOS ? 'recording.mp4' : 'recording.webm', {
       type: isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus'
     });
 
@@ -426,7 +426,7 @@ export default function ClientWhisperExample() {
           }
 
           // Create a File from the blob with proper extension
-          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.m4a' : 'recording.webm', {
+          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.mp4' : 'recording.webm', {
             type: isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus'
           });
           console.log('Audio file created:', {
