@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { transcribe } from '../app/actions/transcribe';
 import type { FFmpegConfig } from 'use-stt';
 import { useSTT } from 'use-stt';
-import { Mp3Encoder, MPEGMode } from 'lamejs2';
+import { Mp3Encoder } from 'lamejs2';
 
 interface DebugLog {
   timestamp: string;
@@ -477,7 +477,7 @@ export default function ClientWhisperExample() {
                 channels: 1,
                 sampleRate: 16000,
                 bitRate: 128,
-                mode: MPEGMode.MONO
+                mode: 3  // MONO = 3
               });
               
               // Get audio data and convert to 16-bit integers

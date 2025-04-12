@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "clean": "rm -rf .next node_modules .turbo out dist",
+    "clean:all": "npm run clean && rm -rf package-lock.json"
   },
   "dependencies": {
     "lamejs2": "^0.1.2",
