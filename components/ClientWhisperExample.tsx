@@ -63,22 +63,32 @@ async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<
     });
 
     if (isIOS) {
+      console.log('Starting iOS-specific audio processing...');
       // For iOS, we'll keep the MP4 format but ensure correct sample rate and channels
       const processedBuffer = audioContext.createBuffer(
         1, // mono
         audioBuffer.length,
         16000 // target sample rate
       );
+      console.log('Created processed buffer:', {
+        numberOfChannels: processedBuffer.numberOfChannels,
+        length: processedBuffer.length,
+        sampleRate: processedBuffer.sampleRate,
+        duration: processedBuffer.duration
+      });
 
       // Mix down to mono and resample
+      console.log('Starting mono conversion...');
       const channelData = processedBuffer.getChannelData(0);
       if (audioBuffer.numberOfChannels === 1) {
+        console.log('Source is already mono, copying data...');
         // Copy mono data
         const sourceData = audioBuffer.getChannelData(0);
         for (let i = 0; i < channelData.length; i++) {
           channelData[i] = sourceData[i];
         }
       } else {
+        console.log('Converting stereo to mono...');
         // Mix down to mono
         const left = audioBuffer.getChannelData(0);
         const right = audioBuffer.getChannelData(1);
@@ -86,51 +96,112 @@ async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<
           channelData[i] = (left[i] + right[i]) / 2;
         }
       }
+      console.log('Mono conversion complete');
 
       // Create a MediaStreamDestination and connect the audio chain
+      console.log('Setting up audio processing chain...');
       const destination = audioContext.createMediaStreamDestination();
+      console.log('Created MediaStreamDestination:', {
+        numberOfChannels: destination.stream.getAudioTracks()[0].getSettings().channelCount,
+        streamActive: destination.stream.active,
+        trackSettings: destination.stream.getAudioTracks()[0].getSettings()
+      });
+
       const source = audioContext.createBufferSource();
       source.buffer = processedBuffer;
+      console.log('Created BufferSource:', {
+        playbackRate: source.playbackRate.value,
+        duration: source.buffer?.duration,
+        numberOfChannels: source.buffer?.numberOfChannels
+      });
       
       // Add a gain node for potential volume adjustment
       const gainNode = audioContext.createGain();
       gainNode.gain.value = 1.0;
+      console.log('Created GainNode:', {
+        gainValue: gainNode.gain.value,
+        numberOfInputs: gainNode.numberOfInputs,
+        numberOfOutputs: gainNode.numberOfOutputs
+      });
       
       // Connect the audio chain
+      console.log('Connecting audio nodes...');
       source.connect(gainNode);
       gainNode.connect(destination);
+      console.log('Audio nodes connected');
 
       // Create a new MediaRecorder with MP4 format
+      console.log('Creating MediaRecorder for iOS...');
       const mediaRecorder = new MediaRecorder(destination.stream, {
         mimeType: 'audio/mp4',
         audioBitsPerSecond: 24000
+      });
+      console.log('MediaRecorder created:', {
+        state: mediaRecorder.state,
+        mimeType: mediaRecorder.mimeType,
+        audioBitsPerSecond: mediaRecorder.audioBitsPerSecond
       });
 
       const chunks: Blob[] = [];
       return new Promise((resolve, reject) => {
         mediaRecorder.ondataavailable = (e) => {
+          console.log('MediaRecorder data available:', {
+            dataSize: e.data.size,
+            dataType: e.data.type,
+            timestamp: new Date().toISOString()
+          });
           if (e.data.size > 0) chunks.push(e.data);
         };
 
         mediaRecorder.onstop = () => {
+          console.log('MediaRecorder stopped, creating final blob...');
           const processedBlob = new Blob(chunks, { type: 'audio/mp4' });
           console.log('iOS audio processing complete:', {
             originalSize: audioBlob.size,
             processedSize: processedBlob.size,
             originalType: audioBlob.type,
-            processedType: processedBlob.type
+            processedType: processedBlob.type,
+            numberOfChunks: chunks.length,
+            timestamp: new Date().toISOString()
           });
           resolve(processedBlob);
         };
 
-        mediaRecorder.onerror = (err) => reject(err);
+        mediaRecorder.onerror = (err) => {
+          console.error('MediaRecorder error:', {
+            error: err,
+            state: mediaRecorder.state,
+            timestamp: new Date().toISOString()
+          });
+          reject(err);
+        };
 
         // Start recording and playback
+        console.log('Starting MediaRecorder and audio playback...');
         mediaRecorder.start();
+        console.log('MediaRecorder started:', {
+          state: mediaRecorder.state,
+          timestamp: new Date().toISOString()
+        });
+
         source.start(0);
+        console.log('Audio source started');
+
         source.onended = () => {
-          console.log('Audio playback ended, stopping recorder');
-          mediaRecorder.stop();
+          console.log('Audio playback ended, stopping recorder:', {
+            recorderState: mediaRecorder.state,
+            timestamp: new Date().toISOString()
+          });
+          try {
+            mediaRecorder.stop();
+            console.log('MediaRecorder stop called');
+          } catch (error) {
+            console.error('Error stopping MediaRecorder:', {
+              error,
+              state: mediaRecorder.state
+            });
+            reject(error);
+          }
         };
       });
     } else {
