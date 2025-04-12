@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { transcribe } from '../app/actions/transcribe';
 import type { FFmpegConfig } from 'use-stt';
 import { useSTT } from 'use-stt';
+import lamejs from 'lamejs';
 
 interface DebugLog {
   timestamp: string;
@@ -434,7 +435,7 @@ export default function ClientWhisperExample() {
 
           let finalBlob = recordedBlob;
           if (isIOSRef.current) {
-            console.log('iOS recording detected, converting to 16kHz mono...');
+            console.log('iOS recording detected, converting to MP3...');
             
             // Create AudioContext at 16kHz
             const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
@@ -465,44 +466,48 @@ export default function ClientWhisperExample() {
 
               // Render the audio
               const monoBuffer = await offlineCtx.startRendering();
-              console.log('Audio converted:', {
+              console.log('Audio converted to 16kHz mono:', {
                 newSampleRate: monoBuffer.sampleRate,
                 newChannels: monoBuffer.numberOfChannels,
                 duration: monoBuffer.duration
               });
 
-              // Keep as MP4 but with correct sample rate and channels
-              const destination = audioContext.createMediaStreamDestination();
-              const newSource = audioContext.createBufferSource();
-              newSource.buffer = monoBuffer;
-              newSource.connect(destination);
+              // Convert to MP3 using lamejs
+              const mp3encoder = new lamejs.Mp3Encoder(1, 16000, 128);
+              const samples = new Int16Array(monoBuffer.length);
+              
+              // Get audio data and convert to 16-bit integers
+              const channelData = monoBuffer.getChannelData(0);
+              for (let i = 0; i < channelData.length; i++) {
+                // Convert Float32 to Int16
+                samples[i] = channelData[i] < 0 
+                  ? channelData[i] * 0x8000 
+                  : channelData[i] * 0x7FFF;
+              }
 
-              const mediaRecorder = new MediaRecorder(destination.stream, {
-                mimeType: 'audio/mp4',
-                audioBitsPerSecond: 24000
-              });
+              // Encode to MP3
+              const mp3Data = [];
+              const sampleBlockSize = 1152; // Must be multiple of 576
+              for (let i = 0; i < samples.length; i += sampleBlockSize) {
+                const sampleChunk = samples.subarray(i, i + sampleBlockSize);
+                const mp3buf = mp3encoder.encodeBuffer(sampleChunk);
+                if (mp3buf.length > 0) {
+                  mp3Data.push(mp3buf);
+                }
+              }
 
-              const chunks: Blob[] = [];
-              finalBlob = await new Promise((resolve, reject) => {
-                mediaRecorder.ondataavailable = (e) => {
-                  if (e.data.size > 0) chunks.push(e.data);
-                };
+              // Get the last chunk of MP3 data
+              const mp3buf = mp3encoder.flush();
+              if (mp3buf.length > 0) {
+                mp3Data.push(mp3buf);
+              }
 
-                mediaRecorder.onstop = () => {
-                  const mp4Blob = new Blob(chunks, { type: 'audio/mp4' });
-                  console.log('iOS audio processing complete:', {
-                    originalSize: recordedBlob.size,
-                    processedSize: mp4Blob.size,
-                    type: mp4Blob.type
-                  });
-                  resolve(mp4Blob);
-                };
-
-                mediaRecorder.onerror = (err) => reject(err);
-
-                mediaRecorder.start();
-                newSource.start(0);
-                newSource.onended = () => mediaRecorder.stop();
+              // Combine all MP3 chunks
+              finalBlob = new Blob(mp3Data, { type: 'audio/mpeg' });
+              console.log('Converted to MP3:', {
+                originalSize: recordedBlob.size,
+                mp3Size: finalBlob.size,
+                type: finalBlob.type
               });
             } finally {
               await audioContext.close();
@@ -510,7 +515,7 @@ export default function ClientWhisperExample() {
           }
 
           // Create a File from the blob with proper extension
-          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.mp4' : 'recording.webm', {
+          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.mp3' : 'recording.webm', {
             type: finalBlob.type
           });
           console.log('Audio file created:', {
