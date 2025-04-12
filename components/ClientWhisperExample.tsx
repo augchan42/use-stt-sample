@@ -25,10 +25,11 @@ const defaultConfig: FFmpegConfig = {
 };
 
 // Function to standardize audio to WebM using Web Audio API
-async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
+async function standardizeAudioToWebM(audioBlob: Blob, isIOS: boolean): Promise<Blob> {
   console.log('Starting audio standardization...', {
     inputSize: audioBlob.size,
     inputType: audioBlob.type,
+    isIOS,
     timestamp: new Date().toISOString()
   });
   
@@ -43,97 +44,133 @@ async function standardizeAudioToWebM(audioBlob: Blob): Promise<Blob> {
     outputLatency: audioContext.outputLatency
   });
 
-  // Convert blob to array buffer
-  const arrayBuffer = await audioBlob.arrayBuffer();
-  console.log('Blob converted to ArrayBuffer:', {
-    bufferByteLength: arrayBuffer.byteLength
-  });
-  
-  // Decode the audio data
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  
-  console.log('Audio decoded:', {
-    sampleRate: audioBuffer.sampleRate,
-    duration: audioBuffer.duration,
-    numberOfChannels: audioBuffer.numberOfChannels,
-    length: audioBuffer.length,
-    timestamp: new Date().toISOString()
-  });
+  try {
+    // Convert blob to array buffer
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    console.log('Blob converted to ArrayBuffer:', {
+      bufferByteLength: arrayBuffer.byteLength
+    });
+    
+    // Decode the audio data
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    
+    console.log('Audio decoded:', {
+      sampleRate: audioBuffer.sampleRate,
+      duration: audioBuffer.duration,
+      numberOfChannels: audioBuffer.numberOfChannels,
+      length: audioBuffer.length,
+      timestamp: new Date().toISOString()
+    });
 
-  // Create a media stream destination
-  const destination = audioContext.createMediaStreamDestination();
-  console.log('MediaStreamDestination created:', {
-    numberOfChannels: destination.stream.getAudioTracks()[0].getSettings()
-  });
-  
-  // Create source from audio buffer
-  const source = audioContext.createBufferSource();
-  source.buffer = audioBuffer;
-  
-  // Create gain node for volume normalization if needed
-  const gainNode = audioContext.createGain();
-  gainNode.gain.value = 1.0; // Adjust if needed
-  
-  // Connect nodes
-  source.connect(gainNode);
-  gainNode.connect(destination);
-  
-  // Create MediaRecorder with WebM encoding
-  const mediaRecorder = new MediaRecorder(destination.stream, {
-    mimeType: 'audio/webm;codecs=opus',
-    audioBitsPerSecond: 24000
-  });
-  console.log('MediaRecorder initialized for conversion:', {
-    mimeType: mediaRecorder.mimeType,
-    state: mediaRecorder.state,
-    audioBitsPerSecond: mediaRecorder.audioBitsPerSecond
-  });
+    if (isIOS) {
+      // For iOS, we'll keep the MP4 format but ensure correct sample rate and channels
+      const processedBuffer = audioContext.createBuffer(
+        1, // mono
+        audioBuffer.length,
+        16000 // target sample rate
+      );
 
-  // Start recording and playing
-  const chunks: Blob[] = [];
-  
-  return new Promise((resolve, reject) => {
-    mediaRecorder.ondataavailable = (e) => {
-      chunks.push(e.data);
-      console.log('Chunk received:', {
-        chunkSize: e.data.size,
-        chunkType: e.data.type,
-        totalChunks: chunks.length
+      // Mix down to mono and resample
+      const channelData = processedBuffer.getChannelData(0);
+      if (audioBuffer.numberOfChannels === 1) {
+        // Copy mono data
+        const sourceData = audioBuffer.getChannelData(0);
+        for (let i = 0; i < channelData.length; i++) {
+          channelData[i] = sourceData[i];
+        }
+      } else {
+        // Mix down to mono
+        const left = audioBuffer.getChannelData(0);
+        const right = audioBuffer.getChannelData(1);
+        for (let i = 0; i < channelData.length; i++) {
+          channelData[i] = (left[i] + right[i]) / 2;
+        }
+      }
+
+      // Create a new MediaRecorder with MP4 format
+      const stream = audioContext.createMediaStreamDestination().stream;
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/mp4',
+        audioBitsPerSecond: 24000
       });
-    };
-    
-    mediaRecorder.onstop = () => {
-      const webmBlob = new Blob(chunks, { type: 'audio/webm' });
-      console.log('Audio standardization complete:', {
-        originalSize: audioBlob.size,
-        webmSize: webmBlob.size,
-        originalType: audioBlob.type,
-        webmType: webmBlob.type,
-        conversionRatio: (webmBlob.size / audioBlob.size).toFixed(2),
-        totalChunks: chunks.length,
-        timestamp: new Date().toISOString()
+
+      const chunks: Blob[] = [];
+      return new Promise((resolve, reject) => {
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const processedBlob = new Blob(chunks, { type: 'audio/mp4' });
+          console.log('iOS audio processing complete:', {
+            originalSize: audioBlob.size,
+            processedSize: processedBlob.size,
+            originalType: audioBlob.type,
+            processedType: processedBlob.type
+          });
+          resolve(processedBlob);
+        };
+
+        mediaRecorder.onerror = (err) => reject(err);
+
+        // Start recording
+        mediaRecorder.start();
+        
+        // Play the buffer
+        const source = audioContext.createBufferSource();
+        source.buffer = processedBuffer;
+        source.connect(audioContext.destination);
+        source.start();
+        source.onended = () => mediaRecorder.stop();
       });
-      resolve(webmBlob);
-    };
-    
-    mediaRecorder.onerror = (err) => {
-      console.error('MediaRecorder error during conversion:', err);
-      reject(err);
-    };
-    
-    console.log('Starting conversion recording...');
-    mediaRecorder.start();
-    source.start(0);
-    
-    // Stop recording when the source finishes
-    source.onended = () => {
-      console.log('Audio source ended, stopping conversion...');
-      mediaRecorder.stop();
-    };
-  });
+    } else {
+      // Non-iOS devices can use WebM
+      const destination = audioContext.createMediaStreamDestination();
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 1.0;
+      
+      source.connect(gainNode);
+      gainNode.connect(destination);
+      
+      const mediaRecorder = new MediaRecorder(destination.stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 24000
+      });
+
+      const chunks: Blob[] = [];
+      return new Promise((resolve, reject) => {
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const webmBlob = new Blob(chunks, { type: 'audio/webm' });
+          console.log('Audio standardization complete:', {
+            originalSize: audioBlob.size,
+            webmSize: webmBlob.size,
+            originalType: audioBlob.type,
+            webmType: webmBlob.type
+          });
+          resolve(webmBlob);
+        };
+
+        mediaRecorder.onerror = (err) => reject(err);
+
+        mediaRecorder.start();
+        source.start(0);
+        source.onended = () => mediaRecorder.stop();
+      });
+    }
+  } finally {
+    // Ensure AudioContext is closed
+    await audioContext.close();
+  }
 }
 
-// Wrapper function to handle transcription
+// Update the transcribeAudio function to pass isIOS parameter
 async function transcribeAudio(audioBlob: Blob) {
   console.log('Client: Received audio blob:', {
     size: audioBlob.size,
@@ -151,12 +188,12 @@ async function transcribeAudio(audioBlob: Blob) {
     let processedBlob = audioBlob;
     if (needsStandardization) {
       console.log('Audio needs standardization');
-      processedBlob = await standardizeAudioToWebM(audioBlob);
+      processedBlob = await standardizeAudioToWebM(audioBlob, isIOS);
     }
 
     // Create a File from the blob with proper extension
-    const audioFile = new File([processedBlob], 'recording.webm', {
-      type: 'audio/webm;codecs=opus'
+    const audioFile = new File([processedBlob], isIOS ? 'recording.m4a' : 'recording.webm', {
+      type: isIOS ? 'audio/mp4' : 'audio/webm;codecs=opus'
     });
 
     // Send to server for transcription
@@ -366,12 +403,12 @@ export default function ClientWhisperExample() {
               });
               console.log('iOS AudioContext initialized');
             }
-            finalBlob = await standardizeAudioToWebM(recordedBlob);
+            finalBlob = await standardizeAudioToWebM(recordedBlob, isIOSRef.current);
           }
 
           // Create a File from the blob with proper extension
-          const audioFile = new File([finalBlob], 'recording.webm', {
-            type: 'audio/webm;codecs=opus'
+          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.m4a' : 'recording.webm', {
+            type: isIOSRef.current ? 'audio/mp4' : 'audio/webm;codecs=opus'
           });
           console.log('Audio file created:', {
             name: audioFile.name,
