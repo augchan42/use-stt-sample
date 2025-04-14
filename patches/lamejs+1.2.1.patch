@@ -1,0 +1,112 @@
+diff --git a/node_modules/lamejs/src/js/BitStream.js b/node_modules/lamejs/src/js/BitStream.js
+index dd9d69f..94471ae 100644
+--- a/node_modules/lamejs/src/js/BitStream.js
++++ b/node_modules/lamejs/src/js/BitStream.js
+@@ -19,6 +19,8 @@ var Tables = require('./Tables.js');
+ var Encoder = require('./Encoder.js');
+ var LameInternalFlags = require('./LameInternalFlags.js');
+ 
++var LAME_MAXMP3BUFFER = 147456;
++
+ function BitStream() {
+     var self = this;
+     var CRC16_POLYNOMIAL = 0x8005;
+@@ -26,6 +28,8 @@ function BitStream() {
+     /* we work with ints, so when doing bit manipulation, we limit ourselves to
+      * MAX_LENGTH-2 just to be on the safe side
+      */
++    var LAME_MAXMP3BUFFER = 147456;
++
+     var MAX_LENGTH = 32;
+ 
+     //GainAnalysis ga;
+@@ -89,7 +93,7 @@ function BitStream() {
+             if (bufBitIdx == 0) {
+                 bufBitIdx = 8;
+                 bufByteIdx++;
+-                assert(bufByteIdx < Lame.LAME_MAXMP3BUFFER);
++                assert(bufByteIdx < LAME_MAXMP3BUFFER);
+                 assert(gfc.header[gfc.w_ptr].write_timing >= totbit);
+                 if (gfc.header[gfc.w_ptr].write_timing == totbit) {
+                     putheader_bits(gfc);
+@@ -120,7 +124,7 @@ function BitStream() {
+             if (bufBitIdx == 0) {
+                 bufBitIdx = 8;
+                 bufByteIdx++;
+-                assert(bufByteIdx < Lame.LAME_MAXMP3BUFFER);
++                assert(bufByteIdx < LAME_MAXMP3BUFFER);
+                 buf[bufByteIdx] = 0;
+             }
+ 
+@@ -697,7 +701,7 @@ function BitStream() {
+     };
+ 
+     this.init_bit_stream_w = function (gfc) {
+-        buf = new_byte(Lame.LAME_MAXMP3BUFFER);
++        buf = new_byte(LAME_MAXMP3BUFFER);
+ 
+         gfc.h_ptr = gfc.w_ptr = 0;
+         gfc.header[gfc.h_ptr].write_timing = 0;
+diff --git a/node_modules/lamejs/src/js/Encoder.js b/node_modules/lamejs/src/js/Encoder.js
+index 4fea74e..d384f5e 100644
+--- a/node_modules/lamejs/src/js/Encoder.js
++++ b/node_modules/lamejs/src/js/Encoder.js
+@@ -109,6 +109,7 @@ Encoder.fircoef = [-0.0207887 * 5, -0.0378413 * 5,
+ function Encoder() {
+     var NewMDCT = require('./NewMDCT.js');
+     var III_psy_ratio = require('./III_psy_ratio.js');
++    var MPEGMode = require('./MPEGMode.js')
+ 
+     var FFTOFFSET = Encoder.FFTOFFSET;
+     var MPG_MD_MS_LR = Encoder.MPG_MD_MS_LR;
+diff --git a/node_modules/lamejs/src/js/Lame.js b/node_modules/lamejs/src/js/Lame.js
+index d2dc7c0..8ec1b72 100644
+--- a/node_modules/lamejs/src/js/Lame.js
++++ b/node_modules/lamejs/src/js/Lame.js
+@@ -25,6 +25,8 @@ var BitStream = require('./BitStream.js');
+ var Tables = require('./Tables.js');
+ var Encoder = require('./Encoder.js');
+ 
++var MPEGMode = require('./MPEGMode.js')
++
+ function Lame() {
+     var self = this;
+     var LAME_MAXALBUMART = (128 * 1024);
+diff --git a/node_modules/lamejs/src/js/Presets.js b/node_modules/lamejs/src/js/Presets.js
+index a3de3c6..bdc7fa2 100644
+--- a/node_modules/lamejs/src/js/Presets.js
++++ b/node_modules/lamejs/src/js/Presets.js
+@@ -14,6 +14,8 @@ var new_int = common.new_int;
+ var new_int_n = common.new_int_n;
+ var assert = common.assert;
+ 
++var Lame = require('./Lame.js');
++
+ function Presets() {
+     function VBRPresets(qual, comp, compS,
+                         y, shThreshold, shThresholdS,
+diff --git a/node_modules/lamejs/src/js/PsyModel.js b/node_modules/lamejs/src/js/PsyModel.js
+index e440280..e96d2e0 100644
+--- a/node_modules/lamejs/src/js/PsyModel.js
++++ b/node_modules/lamejs/src/js/PsyModel.js
+@@ -158,6 +158,8 @@ var assert = common.assert;
+ var FFT = require("./FFT.js");
+ var Encoder = require("./Encoder.js");
+ 
++var MPEGMode = require('./MPEGMode.js')
++
+ function PsyModel() {
+ 
+     var fft = new FFT();
+diff --git a/node_modules/lamejs/src/js/QuantizePVT.js b/node_modules/lamejs/src/js/QuantizePVT.js
+index ef69bef..6a5f408 100644
+--- a/node_modules/lamejs/src/js/QuantizePVT.js
++++ b/node_modules/lamejs/src/js/QuantizePVT.js
+@@ -43,6 +43,7 @@ var assert = common.assert;
+ var Encoder = require('./Encoder.js');
+ var MeanBits = require('./MeanBits.js');
+ var LameInternalFlags = require('./LameInternalFlags.js');
++var BitStream = require('./BitStream.js');
+ 
+ QuantizePVT.Q_MAX = (256 + 1);
+ QuantizePVT.Q_MAX2 = 116;

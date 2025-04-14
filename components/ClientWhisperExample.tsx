@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { transcribe } from '../app/actions/transcribe';
 import type { FFmpegConfig } from 'use-stt';
 import { useSTT } from 'use-stt';
-import { Mp3Encoder } from 'lamejs2';
+import { Mp3EncoderWrapper } from '../lib/mp3-encoder';
 
 interface DebugLog {
   timestamp: string;
@@ -434,88 +434,128 @@ export default function ClientWhisperExample() {
           chunksRef.current = []; // Clear chunks for next recording
 
           let finalBlob = recordedBlob;
-          if (isIOSRef.current) {
-            console.log('iOS recording detected, converting to MP3...');
-            
-            // Create AudioContext at 16kHz
-            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
-              sampleRate: 16000
+          console.log('Converting to MP3...');
+          
+          // Create AudioContext at 16kHz
+          const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+            sampleRate: 16000
+          });
+
+          try {
+            // Convert blob to array buffer
+            const arrayBuffer = await recordedBlob.arrayBuffer();
+            console.log('Converting audio buffer:', {
+              size: arrayBuffer.byteLength
+            });
+
+            // Decode the audio data
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            console.log('Audio decoded:', {
+              originalSampleRate: audioBuffer.sampleRate,
+              originalChannels: audioBuffer.numberOfChannels,
+              duration: audioBuffer.duration
+            });
+
+            // Create mono buffer at 16kHz
+            const offlineCtx = new OfflineAudioContext(1, audioBuffer.duration * 16000, 16000);
+            const source = offlineCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(offlineCtx.destination);
+            source.start();
+
+            // Render the audio
+            const monoBuffer = await offlineCtx.startRendering();
+            console.log('Audio converted to 16kHz mono:', {
+              newSampleRate: monoBuffer.sampleRate,
+              newChannels: monoBuffer.numberOfChannels,
+              duration: monoBuffer.duration
+            });
+
+            console.log('Converting to MP3...');
+
+            // Get audio data and convert to 16-bit integers
+            const int16Samples = new Int16Array(audioBuffer.length);
+            for (let i = 0; i < audioBuffer.length; i++) {
+                const s = Math.max(-1, Math.min(1, audioBuffer.getChannelData(0)[i])) * 0x7fff;
+                int16Samples[i] = s;
+            }
+
+            console.log('Setting up MP3 encoder:', {
+              channels: 1,
+              sampleRate: 16000,
+              bitRate: 128,
+              samples: {
+                length: int16Samples.length,
+                min: Math.min(...Array.from(int16Samples)),
+                max: Math.max(...Array.from(int16Samples)),
+                type: int16Samples.constructor.name
+              }
+            });
+
+            // Create encoder with mono audio, 16kHz sample rate, 128kbps bitrate
+            const encoder = new Mp3EncoderWrapper(1, 16000, 128);
+            console.log('Encoder created:', encoder);
+
+            // Process audio in chunks of 1152 samples (MPEG frame size)
+            const sampleBlockSize = 1152;
+            const mp3Data = [];
+            let remaining = int16Samples.length;
+
+            console.log('Starting MP3 encoding in chunks:', {
+              totalSamples: int16Samples.length,
+              chunkSize: sampleBlockSize,
+              expectedChunks: Math.ceil(int16Samples.length / sampleBlockSize)
             });
 
             try {
-              // Convert blob to array buffer
-              const arrayBuffer = await recordedBlob.arrayBuffer();
-              console.log('Converting audio buffer:', {
-                size: arrayBuffer.byteLength
-              });
-
-              // Decode the audio data
-              const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-              console.log('Audio decoded:', {
-                originalSampleRate: audioBuffer.sampleRate,
-                originalChannels: audioBuffer.numberOfChannels,
-                duration: audioBuffer.duration
-              });
-
-              // Create mono buffer at 16kHz
-              const offlineCtx = new OfflineAudioContext(1, audioBuffer.duration * 16000, 16000);
-              const source = offlineCtx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(offlineCtx.destination);
-              source.start();
-
-              // Render the audio
-              const monoBuffer = await offlineCtx.startRendering();
-              console.log('Audio converted to 16kHz mono:', {
-                newSampleRate: monoBuffer.sampleRate,
-                newChannels: monoBuffer.numberOfChannels,
-                duration: monoBuffer.duration
-              });
-
-              // Convert to MP3 using lamejs2
-              const mp3encoder = new Mp3Encoder(1, 44100, 128); // channels, sampleRate, bitRate
-              
-              // Get audio data and convert to 16-bit integers
-              const samples = new Int16Array(monoBuffer.length);
-              const channelData = monoBuffer.getChannelData(0);
-              for (let i = 0; i < channelData.length; i++) {
-                // Convert Float32 to Int16
-                samples[i] = channelData[i] < 0 
-                  ? channelData[i] * 0x8000 
-                  : channelData[i] * 0x7FFF;
+              for (let i = 0; remaining >= sampleBlockSize; i += sampleBlockSize) {
+                const chunk = int16Samples.subarray(i, i + sampleBlockSize);
+                const mp3buf = encoder.encodeBuffer(chunk);
+                if (mp3buf.length > 0) {
+                  mp3Data.push(mp3buf);
+                }
+                remaining -= sampleBlockSize;
               }
 
-              // Encode to MP3
-              const mp3Data = [];
-              const sampleBlockSize = 1152; // Must be multiple of 576
-              for (let i = 0; i < samples.length; i += sampleBlockSize) {
-                const sampleChunk = samples.subarray(i, i + sampleBlockSize);
-                const mp3buf = mp3encoder.encodeBuffer(sampleChunk);
+              // Handle any remaining samples
+              if (remaining > 0) {
+                const chunk = int16Samples.subarray(int16Samples.length - remaining);
+                const mp3buf = encoder.encodeBuffer(chunk);
                 if (mp3buf.length > 0) {
                   mp3Data.push(mp3buf);
                 }
               }
 
-              // Get the last chunk of MP3 data
-              const mp3buf = mp3encoder.flush();
+              // Flush the encoder and add any remaining data
+              const mp3buf = encoder.flush();
               if (mp3buf.length > 0) {
                 mp3Data.push(mp3buf);
               }
 
-              // Combine all MP3 chunks
-              finalBlob = new Blob(mp3Data, { type: 'audio/mpeg' });
-              console.log('Converted to MP3:', {
+              // Create MP3 blob from all chunks
+              finalBlob = new Blob(mp3Data, { type: 'audio/mp3' });
+              console.log('MP3 conversion complete:', {
                 originalSize: recordedBlob.size,
                 mp3Size: finalBlob.size,
-                type: finalBlob.type
+                type: finalBlob.type,
+                chunks: mp3Data.length
               });
-            } finally {
-              await audioContext.close();
+            } catch (error) {
+              console.error('MP3 encoding error:', {
+                message: error instanceof Error ? error.message : 'Unknown error',
+                stack: error instanceof Error ? error.stack : undefined,
+                samplesLength: int16Samples.length,
+                remaining,
+                bufferLength: mp3Data.length
+              });
+              throw error;
             }
+          } finally {
+            await audioContext.close();
           }
 
-          // Create a File from the blob with proper extension
-          const audioFile = new File([finalBlob], isIOSRef.current ? 'recording.mp3' : 'recording.webm', {
+          // Create a File from the blob
+          const audioFile = new File([finalBlob], 'recording.mp3', {
             type: finalBlob.type
           });
           console.log('Audio file created:', {
@@ -676,6 +716,86 @@ export default function ClientWhisperExample() {
       }
     };
   }, []);
+
+  const loadEncoder = async () => {
+    try {
+      // Create encoder instance with separate arguments
+      const encoder = new Mp3EncoderWrapper(
+        1,      // channels (mono)
+        16000,  // sample rate (16kHz)
+        128     // bitrate (128kbps)
+      );
+      
+      console.log('Encoder instance created:', {
+        encoder,
+        type: typeof encoder,
+        methods: Object.keys(encoder),
+        hasEncodeBuffer: typeof encoder.encodeBuffer === 'function',
+        hasFlush: typeof encoder.flush === 'function'
+      });
+      return encoder;
+    } catch (error) {
+      console.error('Error loading encoder:', error);
+      throw error;
+    }
+  };
+
+  const convertToMp3 = async (audioBuffer: Float32Array): Promise<Blob> => {
+    console.log('Converting to MP3:', {
+        bufferLength: audioBuffer.length,
+        sampleRate: 16000
+    });
+
+    // Create encoder instance
+    const encoder = new Mp3EncoderWrapper(1, 16000, 128);
+
+    // Convert Float32Array to Int16Array
+    const samples = new Int16Array(audioBuffer.length);
+    for (let i = 0; i < audioBuffer.length; i++) {
+        const s = Math.max(-1, Math.min(1, audioBuffer[i]));
+        samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+
+    // Process samples in chunks of 1152 samples
+    const CHUNK_SIZE = 1152;
+    const chunks = Math.ceil(samples.length / CHUNK_SIZE);
+    const mp3Data: Int8Array[] = [];
+
+    console.log('Processing MP3 in chunks:', {
+        totalSamples: samples.length,
+        chunksCount: chunks
+    });
+
+    for (let i = 0; i < chunks; i++) {
+        const chunk = samples.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const encoded = encoder.encodeBuffer(chunk);
+        if (encoded && encoded.length > 0) {
+            mp3Data.push(encoded);
+        }
+    }
+
+    // Get the last bytes from the encoder
+    const finalData = encoder.flush();
+    if (finalData && finalData.length > 0) {
+        mp3Data.push(finalData);
+    }
+
+    // Combine all chunks
+    const totalLength = mp3Data.reduce((acc, chunk) => acc + chunk.length, 0);
+    const combinedData = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of mp3Data) {
+        combinedData.set(chunk, offset);
+        offset += chunk.length;
+    }
+
+    console.log('MP3 conversion complete:', {
+        originalSize: audioBuffer.length * 4, // 4 bytes per Float32
+        mp3Size: combinedData.length
+    });
+
+    return new Blob([combinedData], { type: 'audio/mp3' });
+  };
 
   return (
     <div className="p-4 max-w-4xl mx-auto">

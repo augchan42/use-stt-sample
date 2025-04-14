@@ -1,0 +1,29 @@
+var Tables = require('./Tables.js');
+var Encoder = require('./Encoder.js');
+var LameInternalFlags = require('./LameInternalFlags.js');
+
+var LAME_MAXMP3BUFFER = 147456;
+
+function BitStream() {
+    var self = this;
+    var CRC16_POLYNOMIAL = 0x8005;
+
+    /*
+     * Static methods moved inside constructor
+     */
+    self.EQ = function (a, b) {
+        if (a > b) {
+            return Math.abs(a - b) <= (Math.abs(a) * 1e-6);
+        }
+        return Math.abs(a - b) <= (Math.abs(b) * 1e-6);
+    };
+
+    self.NEQ = function (a, b) {
+        return !self.EQ(a, b);
+    };
+
+    /*
+     * we work with ints, so when doing bit manipulation, we limit ourselves to
+     * MAX_LENGTH-2 just to be on the safe side
+     */
+} 

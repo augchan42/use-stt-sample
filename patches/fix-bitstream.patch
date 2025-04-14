@@ -1,0 +1,49 @@
+--- a/node_modules/lamejs/src/js/BitStream.js
++++ b/node_modules/lamejs/src/js/BitStream.js
+@@ -19,17 +19,6 @@ var Tables = require('./Tables.js');
+ var Encoder = require('./Encoder.js');
+ var LameInternalFlags = require('./LameInternalFlags.js');
+ 
+-BitStream.EQ = function (a, b) {
+-    return (Math.abs(a) > Math.abs(b)) ? (Math.abs((a) - (b)) <= (Math
+-        .abs(a) * 1e-6))
+-        : (Math.abs((a) - (b)) <= (Math.abs(b) * 1e-6));
+-};
+-
+-BitStream.NEQ = function (a, b) {
+-    return !BitStream.EQ(a, b);
+-};
+-
+-var LAME_MAXMP3BUFFER = 147456;
+-
+ function BitStream() {
+     var self = this;
+     var CRC16_POLYNOMIAL = 0x8005;
+ 
++    // Instance methods
++    this.EQ = function(a, b) {
++        if (a > b) {
++            return Math.abs(a - b) <= (Math.abs(a) * 1e-6);
++        }
++        return Math.abs(a - b) <= (Math.abs(b) * 1e-6);
++    };
++    this.NEQ = function(a, b) {
++        return !this.EQ(a, b);
++    };
++
+     var LAME_MAXMP3BUFFER = 147456;
+ }
+ 
+-// Static methods defined after the class
+-BitStream.EQ = function (a, b) {
+-    if (a > b) {
+-        return Math.abs(a - b) <= (Math.abs(a) * 1e-6);
+-    }
+-    return Math.abs(a - b) <= (Math.abs(b) * 1e-6);
+-};
+-
+-BitStream.NEQ = function (a, b) {
+-    return !BitStream.EQ(a, b);
+-};
+-
+-var LAME_MAXMP3BUFFER = 147456; 
