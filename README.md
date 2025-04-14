@@ -4,7 +4,6 @@ This is a basic example of using the `useSTT` hook for speech-to-text functional
 
 ## Requirements
 
-- Modern browser with WebRTC support (Chrome, Firefox, Edge, Safari)
 - Microphone access
 - OpenAI API key with access to Whisper API
 
